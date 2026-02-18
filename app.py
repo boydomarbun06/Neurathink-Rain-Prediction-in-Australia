@@ -12,20 +12,21 @@ import pandas as pd
 import numpy as np
 import joblib
 
-# 1. Load Model
+# 1. Load Model & Metadata
 @st.cache_resource
 def load_model():
+    # Memastikan model dimuat dengan benar
     return joblib.load('lightgbm_model.pkl')
 
 model = load_model()
-# Mengambil urutan 65 kolom asli dari model secara otomatis
 model_features = model.feature_name_
 
-# 2. UI Layout sesuai capture gambar
-st.set_page_config(page_title="Neurathink : Rain Prediction in Australia", layout="wide")
+# 2. UI Layout - Sesuai Gambar Capture Anda
+st.set_page_config(page_title="Neurathink: Rain Prediction Australia", layout="wide")
 st.title("Rain Tomorrow Prediction")
+st.markdown("---")
 
-# Ekstrak daftar kategori langsung dari model agar tidak ada yang terlewat
+# Helper untuk mendapatkan list kategori dari model
 def get_categories(prefix):
     return sorted([col.replace(prefix, '') for col in model_features if col.startswith(prefix)])
 
@@ -36,47 +37,64 @@ wind_3pm = get_categories('WindDir3pm_')
 
 with st.form("input_form"):
     col1, col2 = st.columns(2)
+    
     with col1:
+        # Urutan Sesuai Gambar: Location -> Hum 9am -> Hum 3pm -> Pres 9am -> Rainfall
         loc = st.selectbox("Location", locations)
-        h9 = st.number_input("Humidity 9am", 0.0, 100.0, 60.0)
-        h3 = st.number_input("Humidity 3pm", 0.0, 100.0, 50.0)
-        p9 = st.number_input("Pressure 9am", 900.0, 1100.0, 1015.0)
-        rf = st.number_input("Rainfall Today (mm)", 0.0, 500.0, 0.0)
+        h9 = st.number_input("Humidity 9am", min_value=0.0, max_value=100.0, value=60.0)
+        h3 = st.number_input("Humidity 3pm", min_value=0.0, max_value=100.0, value=50.0)
+        p9 = st.number_input("Pressure 9am", min_value=900.0, max_value=1100.0, value=1015.0)
+        rf = st.number_input("Rainfall (mm)", min_value=0.0, value=0.0)
+
     with col2:
+        # Urutan Sesuai Gambar: Wind Gust -> Wind Dir 9am -> Wind Dir 3pm -> Wind Diff -> Temp Range
         wg = st.selectbox("Wind Gust Direction", wind_gusts)
         w9 = st.selectbox("Wind Direction 9am", wind_9am)
         w3 = st.selectbox("Wind Direction 3pm", wind_3pm)
         w_diff = st.number_input("Wind Speed Difference", value=5.0)
         t_range = st.number_input("Temp Range", value=10.0)
 
+    # Rain Today di bagian bawah tengah
     rt = st.radio("Rain Today", ["No", "Yes"], horizontal=True)
-    submitted = st.form_submit_button("Predict Rain Tomorrow")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    submitted = st.form_submit_button("Predict Rain Tomorrow", use_container_width=True)
 
+# 3. Logika Prediksi
 if submitted:
-    # Buat baris berisi 0 untuk semua 65 fitur
+    # Buat DataFrame template dengan 0 untuk semua 65 kolom model
     input_df = pd.DataFrame(0, index=[0], columns=model_features)
 
-    # Isi fitur numerik & log transform
+    # Isi Fitur Numerik
     input_df['Humidity3pm'] = h3
     input_df['Humidity9am'] = h9
     input_df['Pressure9am'] = p9
     input_df['wind_diff'] = w_diff
     input_df['TempRange'] = t_range
-    input_df['Rainfall_log'] = np.log1p(rf)
+    input_df['Rainfall_log'] = np.log1p(rf) # Transformasi logaritma wajib
     input_df['RainToday_Yes'] = 1 if rt == "Yes" else 0
 
-    # Isi fitur kategorikal (One-Hot)
-    for prefix, val in [('Location_', loc), ('WindGustDir_', wg), ('WindDir9am_', w9), ('WindDir3pm_', w3)]:
-        col = f"{prefix}{val}"
-        if col in input_df.columns:
-            input_df[col] = 1
+    # Isi Fitur Kategorikal (One-Hot Encoding)
+    cat_mappings = [
+        ('Location_', loc),
+        ('WindGustDir_', wg),
+        ('WindDir9am_', w9),
+        ('WindDir3pm_', w3)
+    ]
+    
+    for prefix, val in cat_mappings:
+        col_name = f"{prefix}{val}"
+        if col_name in input_df.columns:
+            input_df[col_name] = 1
 
-    # Prediksi
+    # Prediksi Target: RainTomorrow
     prediction = model.predict(input_df)[0]
     prob = model.predict_proba(input_df)[0]
 
     st.divider()
     if prediction == 1:
-        st.error(f"### HASIL: BESOK HUJAN (YES) - Probabilitas: {prob[1]:.2%}")
+        st.error(f"### RESULT: YES (RainTomorrow)")
+        st.write(f"Probabilitas Hujan: **{prob[1]:.2% Rose}**")
     else:
-        st.success(f"### HASIL: BESOK TIDAK HUJAN (NO) - Probabilitas: {prob[0]:.2%}")
+        st.success(f"### RESULT: NO (RainTomorrow)")
+        st.write(f"Probabilitas Cerah: **{prob[0]:.2% Rose}**")
